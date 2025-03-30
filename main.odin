@@ -5,6 +5,24 @@ import "core:math"
 import "core:math/rand"
 import rb "vendor:raylib"
 
+// Game Configuration
+WINDOW_WIDTH :: 800
+WINDOW_HEIGHT :: 600
+PLAYER_SPEED :: 500
+PLAYER_SIZE :: 20
+ENEMY_SIZE :: 30
+BULLET_SIZE :: 10
+PLAYER_HEALTH :: 100
+ENEMY_HEALTH :: 100
+PLAYER_BULLET_SPEED :: 300
+ENEMY_BULLET_SPEED :: 300
+ENEMY_SPEED :: 100
+SHOOT_DELAY :: 0.1
+ENEMY_SHOOT_DELAY :: 0.5
+ENEMY_SPAWN_DELAY :: 3.0
+BULLET_LIFETIME :: 3.0
+
+Vec2 :: [2]f32
 
 entity :: enum {
 	PLAYER,
@@ -17,18 +35,18 @@ player_action_state :: enum {
 	ATTACK,
 }
 
-Vec2 :: [2]f32
 player :: struct {
 	pos:                 Vec2,
 	size:                Vec2,
 	color:               rb.Color,
-	player_center:       Vec2,
+	player_center:       Vec2, // the center of the player, in this case the center of the rectangle
 	player_action_state: player_action_state,
 	health:              i32,
 	entity:              entity,
+	isAlive:             bool,
 }
 bullet :: struct {
-	x, y:             f32,
+	x, y:             f32, //todo change fo vec2,
 	width, height:    i32,
 	color:            rb.Color,
 	speed:            f32,
@@ -38,7 +56,7 @@ bullet :: struct {
 	entity:           entity,
 }
 Enemy :: struct {
-	x, y:          f32,
+	x, y:          f32, //todo change fo vec2,
 	width, height: i32,
 	color:         rb.Color,
 	health:        i32,
@@ -70,17 +88,23 @@ player_bullet := bullet {
 	entity = entity.PLAYER,
 }
 main :: proc() {
-
 	rb.SetConfigFlags({rb.ConfigFlag.VSYNC_HINT, rb.ConfigFlag.WINDOW_RESIZABLE})
-	rb.InitWindow(800, 600, "Raylib")
+	rb.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Raylib")
 	defer rb.CloseWindow()
 
+	init_game()
+	game_loop()
+	cleanup_game()
+}
+
+init_game :: proc() {
 	player: player = {
-		pos    = Vec2{200, 200},
-		size   = Vec2{20, 20},
-		color  = rb.RED,
-		health = 100,
-		entity = entity.PLAYER,
+		pos     = Vec2{200, 200},
+		size    = Vec2{PLAYER_SIZE, PLAYER_SIZE},
+		color   = rb.RED,
+		health  = PLAYER_HEALTH,
+		isAlive = true,
+		entity  = entity.PLAYER,
 	}
 
 	game_state = {
@@ -89,62 +113,97 @@ main :: proc() {
 		bullets = make([dynamic]bullet),
 	}
 
-	enemyS: Enemy = {
+	enemy: Enemy = {
 		x      = 300,
 		y      = 300,
-		width  = 30,
-		height = 30,
-		health = 100,
-		speed  = 100,
+		width  = ENEMY_SIZE,
+		height = ENEMY_SIZE,
+		health = ENEMY_HEALTH,
+		speed  = ENEMY_SPEED,
 		color  = rb.GREEN,
 		entity = entity.ENEMY,
 	}
 
-	append(&game_state.enemy, enemyS)
+	append(&game_state.enemy, enemy)
+}
 
+game_loop :: proc() {
 	for !rb.WindowShouldClose() {
 		rb.BeginDrawing()
+		rb.ClearBackground(rb.RAYWHITE)
 
 		deltaTime = rb.GetFrameTime()
+		update_timers()
+		update_game_state()
+		draw_game()
 
-		handle_input()
-
-		rb.DrawRectangle(
-			auto_cast game_state.player.pos.x,
-			auto_cast game_state.player.pos.y,
-			auto_cast game_state.player.size.x,
-			auto_cast game_state.player.size.y,
-			game_state.player.color,
-		)
-
-		mouse_position := rb.GetMousePosition()
-		switch game_state.player.player_action_state {
-		case player_action_state.ATTACK:
-			if shoot_cooldown <= 0 {
-				shoot_cooldown = shoot_delay
-				player_attack(mouse_position)
-			}
-
-		case player_action_state.IDLE:
-			shoot_cooldown = 0
-		}
-
-		shoot_cooldown -= deltaTime
-		time_enemy_shoot += deltaTime
-		time += deltaTime
-
-		enemy_shoot()
-
-		add_enemy()
-		update_bullet()
-		update_enemy()
-
-		rb.ClearBackground(rb.RAYWHITE)
 		rb.EndDrawing()
 	}
+}
+
+update_timers :: proc() {
+	shoot_cooldown -= deltaTime
+	time_enemy_shoot += deltaTime
+	time += deltaTime
+}
+
+update_game_state :: proc() {
+	if !game_state.player.isAlive {
+		return
+	}
+
+	handle_input()
+	handle_player_state()
+	update_enemy()
+	update_bullet()
+}
+
+draw_game :: proc() {
+	if !game_state.player.isAlive {
+		rb.DrawText("Game Over", 100, 100, 20, rb.RED)
+		return
+	}
+
+	draw_player()
+	draw_enemies()
+	draw_bullets()
+}
+
+draw_player :: proc() {
+	rb.DrawRectangle(
+		auto_cast game_state.player.pos.x,
+		auto_cast game_state.player.pos.y,
+		auto_cast game_state.player.size.x,
+		auto_cast game_state.player.size.y,
+		game_state.player.color,
+	)
+}
+
+draw_enemies :: proc() {
+	for &enemy in game_state.enemy {
+		rb.DrawRectangle(
+			auto_cast enemy.x,
+			auto_cast enemy.y,
+			enemy.width,
+			enemy.height,
+			enemy.color,
+		)
+	}
+}
+
+draw_bullets :: proc() {
+	for &bullet in game_state.bullets {
+		rb.DrawCircle(auto_cast bullet.x, auto_cast bullet.y, BULLET_SIZE, bullet.color)
+	}
+}
+
+cleanup_game :: proc() {
 	delete(game_state.bullets)
 	delete(game_state.enemy)
 }
+
+// -----------------PLAYER FUNCTIONS-----------------
+
 player_attack :: proc(mouse_position: rb.Vector2) {
 	game_state.player.player_center = get_center_rect(
 		game_state.player.pos.x,
@@ -168,10 +227,57 @@ player_attack :: proc(mouse_position: rb.Vector2) {
 	append(&game_state.bullets, player_bullet)
 
 }
-get_center_rect :: proc(x: f32, y: f32, width: f32, height: f32) -> rb.Vector2 {
-	return rb.Vector2{x + width / 2, y + height / 2}
+handle_player_state :: proc() {
+	mouse_position := rb.GetMousePosition()
+	switch game_state.player.player_action_state {
+	case player_action_state.ATTACK:
+		if shoot_cooldown <= 0 {
+			shoot_cooldown = shoot_delay
+			player_attack(mouse_position)
+		}
+
+	case player_action_state.IDLE:
+		shoot_cooldown = 0
+	}
+
 }
 
+update_player :: proc() {
+
+	if game_state.player.isAlive {
+		handle_input()
+		handle_player_state()
+
+		rb.DrawRectangle(
+			auto_cast game_state.player.pos.x,
+			auto_cast game_state.player.pos.y,
+			auto_cast game_state.player.size.x,
+			auto_cast game_state.player.size.y,
+			game_state.player.color,
+		)
+	}
+}
+handle_input :: proc() {
+	if rb.IsKeyDown(rb.KeyboardKey.W) {
+		game_state.player.pos.y -= speed * deltaTime
+	}
+	if rb.IsKeyDown(rb.KeyboardKey.S) {
+		game_state.player.pos.y += speed * deltaTime
+	}
+	if rb.IsKeyDown(rb.KeyboardKey.A) {
+		game_state.player.pos.x -= speed * deltaTime
+	}
+	if rb.IsKeyDown(rb.KeyboardKey.D) {
+		game_state.player.pos.x += speed * deltaTime
+	}
+
+	if rb.IsMouseButtonDown(rb.MouseButton.LEFT) {
+		game_state.player.player_action_state = player_action_state.ATTACK
+	} else {
+		game_state.player.player_action_state = player_action_state.IDLE
+	}
+}
+// -----------------ENEMY FUNCTIONS-----------------
 enemy_shoot :: proc() {
 	if time_enemy_shoot > .5 {
 		time_enemy_shoot = 0
@@ -198,60 +304,6 @@ enemy_shoot :: proc() {
 		}
 	}
 }
-calc_dir_and_apply_speed :: proc(calc_from: rb.Vector2, calc_to: rb.Vector2, bullet: ^bullet) {
-	// Calculate direction from source to target
-	dx := calc_to.x - calc_from.x
-	dy := calc_to.y - calc_from.y
-	length := math.hypot(dx, dy)
-
-	// Normalize direction and apply speed
-	bullet.speed_x = (dx / length) * bullet.speed
-	bullet.speed_y = (dy / length) * bullet.speed
-}
-check_collision :: proc(bullet: ^bullet) {
-	for &enemy, j in game_state.enemy {
-		#partial switch bullet.entity {
-
-		// Check collision when enemy hits player
-		case entity.ENEMY:
-			if rb.CheckCollisionCircleRec(
-				rb.Vector2{bullet.x, bullet.y},
-				10,
-				rb.Rectangle {
-					game_state.player.pos.x,
-					game_state.player.pos.y,
-					f32(game_state.player.size.x),
-					f32(game_state.player.size.y),
-				},
-			) {
-				game_state.player.health -= 10
-				bullet.isAlive = false
-
-				if game_state.player.health <= 0 {
-					fmt.println("player killed")
-				}
-			}
-
-		// Check collision when player hits enemy
-		case entity.PLAYER:
-			if rb.CheckCollisionCircleRec(
-				rb.Vector2{bullet.x, bullet.y},
-				10,
-				rb.Rectangle{enemy.x, enemy.y, f32(enemy.width), f32(enemy.height)},
-			) {
-				bullet.isAlive = false
-				enemy.health -= 10
-				if enemy.health <= 0 {
-					fmt.println("enemy killed")
-					ordered_remove(&game_state.enemy, j)
-				}
-			}
-		}
-
-	}
-
-
-}
 
 add_enemy :: proc() {
 	if time > 3.0 {
@@ -270,6 +322,8 @@ add_enemy :: proc() {
 }
 
 update_enemy :: proc() {
+	add_enemy()
+	enemy_shoot()
 	// Calculate direction to player
 	for &enemy in game_state.enemy {
 		dx := f32(game_state.player.pos.x) - enemy.x
@@ -289,27 +343,7 @@ update_enemy :: proc() {
 		)
 	}
 }
-
-handle_input :: proc() {
-	if rb.IsKeyDown(rb.KeyboardKey.W) {
-		game_state.player.pos.y -= speed * deltaTime
-	}
-	if rb.IsKeyDown(rb.KeyboardKey.S) {
-		game_state.player.pos.y += speed * deltaTime
-	}
-	if rb.IsKeyDown(rb.KeyboardKey.A) {
-		game_state.player.pos.x -= speed * deltaTime
-	}
-	if rb.IsKeyDown(rb.KeyboardKey.D) {
-		game_state.player.pos.x += speed * deltaTime
-	}
-
-	if rb.IsMouseButtonDown(rb.MouseButton.LEFT) {
-		game_state.player.player_action_state = player_action_state.ATTACK
-	} else {
-		game_state.player.player_action_state = player_action_state.IDLE
-	}
-}
+// -----------------BULLET FUNCTIONS-----------------
 
 update_bullet :: proc() {
 	for &bullet, i in game_state.bullets {
@@ -343,4 +377,64 @@ generate_enemy_bullet :: proc() -> bullet {
 		entity = entity.ENEMY,
 	}
 	return enemy_bullet
+}
+
+get_center_rect :: proc(x: f32, y: f32, width: f32, height: f32) -> rb.Vector2 {
+	return rb.Vector2{x + width / 2, y + height / 2}
+}
+
+calc_dir_and_apply_speed :: proc(calc_from: rb.Vector2, calc_to: rb.Vector2, bullet: ^bullet) {
+	// Calculate direction from source to target
+	dx := calc_to.x - calc_from.x
+	dy := calc_to.y - calc_from.y
+	length := math.hypot(dx, dy)
+
+	// Normalize direction and apply speed
+	bullet.speed_x = (dx / length) * bullet.speed
+	bullet.speed_y = (dy / length) * bullet.speed
+}
+
+check_collision :: proc(bullet: ^bullet) {
+	for &enemy, j in game_state.enemy {
+		#partial switch bullet.entity {
+
+		// Check collision when enemy hits player
+		case entity.ENEMY:
+			if rb.CheckCollisionCircleRec(
+				rb.Vector2{bullet.x, bullet.y},
+				10,
+				rb.Rectangle {
+					game_state.player.pos.x,
+					game_state.player.pos.y,
+					f32(game_state.player.size.x),
+					f32(game_state.player.size.y),
+				},
+			) {
+				game_state.player.health -= 10
+				bullet.isAlive = false
+
+				if game_state.player.health <= 0 {
+					game_state.player.isAlive = false
+				}
+			}
+
+		// Check collision when player hits enemy
+		case entity.PLAYER:
+			if rb.CheckCollisionCircleRec(
+				rb.Vector2{bullet.x, bullet.y},
+				10,
+				rb.Rectangle{enemy.x, enemy.y, f32(enemy.width), f32(enemy.height)},
+			) {
+				bullet.isAlive = false
+				enemy.health -= 10
+				if enemy.health <= 0 {
+					fmt.println("enemy killed")
+					ordered_remove(&game_state.enemy, j)
+				}
+			}
+		}
+
+	}
+
+
 }
